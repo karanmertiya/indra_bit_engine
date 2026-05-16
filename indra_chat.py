@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
@@ -60,16 +61,21 @@ def main():
     print(" ⚡ INDRA-BIT ZERO-MULTIPLIER LLM TERMINAL ⚡")
     print("="*50)
     
-    # We are loading DeepSeek-R1 1.5B (the same one you have in Ollama)
-    # It perfectly fits in an 8GB RAM laptop while providing immense reasoning.
+    # Choose your model. Set to local path for the 32B/70B converted models.
     model_id = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+    # model_id = "./indra_bit_32b_distill" # Uncomment this to run your converted 32B model!
     
-    print(f"\n[SYSTEM] Downloading/Loading {model_id} (1.5 Billion Parameters)...")
-    print("[SYSTEM] This requires about ~3GB of RAM. Please wait...")
+    print(f"\n[SYSTEM] Loading Model: {model_id}...")
     
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
+        # Use low_cpu_mem_usage=True for 32B/70B models
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, 
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True,
+            device_map="cpu"
+        )
     except Exception as e:
         print(f"\n[ERROR] Failed to load model. Ensure you have internet access. Error: {e}")
         sys.exit(1)
