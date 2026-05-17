@@ -96,7 +96,7 @@ def run_conversion_pipeline():
         print(f"[WARNING] Could not verify/create target repository: {e}")
 
     for shard_idx in range(start_shard, TOTAL_SHARDS + 1):
-        shard_name = f"model-{shard_idx:05d}-of-{TOTAL_SHARDS:05d}.safetensors"
+        shard_name = f"model-{shard_idx:06d}-of-{TOTAL_SHARDS:06d}.safetensors"
         print(f"\n[SHARD {shard_idx}/{TOTAL_SHARDS}] Downloading {shard_name} from Hugging Face...")
         
         t_download = time.time()
