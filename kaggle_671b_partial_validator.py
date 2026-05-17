@@ -51,20 +51,28 @@ def run_671b_validation():
         
     # 2. Extract weights (Real or Simulated)
     print("\n[2/5] Extracting actual 671B weight layers...")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Force CPU execution to leverage Kaggle's massive 30GB system RAM (completely immune to CUDA OOM)
+    device = "cpu" 
     
     if local_chunk_path:
         with safe_open(local_chunk_path, framework="pt", device=device) as f:
             keys = list(f.keys())
             print(f"      Keys found in chunk: {len(keys)}")
-            # Pull embedding or first projection layers
             target_key = "model.embed_tokens.weight" if "model.embed_tokens.weight" in keys else keys[0]
             print(f"      Selecting real 671B layer: '{target_key}'")
-            original_weights = f.get_tensor(target_key).to(torch.float32)
+            
+            # Colossal embedding layer (129,280 x 7,168) takes ~3.7GB per clone.
+            # We slice it to a standard matrix block (8,192 x 7,168) to protect memory headroom!
+            full_weight = f.get_tensor(target_key)
+            slice_h = min(8192, full_weight.shape[0])
+            slice_w = min(7168, full_weight.shape[1])
+            original_weights = full_weight[:slice_h, :slice_w].to(torch.float32)
+            print(f"      Sliced colossal embedding layer from {full_weight.shape} down to {original_weights.shape} for memory safety.")
+            del full_weight
     else:
-        # Fallback exact shape match: Layer 0 of DeepSeek-R1 (8192 x 16384)
-        print("      Extracting simulated DeepSeek-R1 Expert Down-Projection layer (8192 x 16384)...")
-        original_weights = torch.randn(8192, 16384, device=device) * 0.02
+        # Fallback exact shape match: Layer 0 of DeepSeek-R1 (8192 x 7168)
+        print("      Extracting simulated DeepSeek-R1 Expert Down-Projection layer (8192 x 7168)...")
+        original_weights = torch.randn(8192, 7168, device=device) * 0.02
 
     # 3. Apply 8-term CSD Snapping + Feedback Bias Correction
     print(f"\n[3/5] Applying 8-term Signed CSD + (y+e)/y Correction + Probabilistic Dither...")
