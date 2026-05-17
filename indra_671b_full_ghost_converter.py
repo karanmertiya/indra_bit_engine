@@ -75,11 +75,17 @@ def convert_tensor_to_8term_csd(W):
 def run_conversion_pipeline():
     api = HfApi()
     
-    # Retrieve HF Token safely
+    # Retrieve HF Token securely from Kaggle Secrets or environment variables
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
-        print("[WARNING] HF_TOKEN environment variable not set. Write access to Hub might fail!")
-        print("Please set your HF_TOKEN inside Kaggle Secrets before launching.")
+        try:
+            from kaggle_secrets import UserSecretsClient
+            user_secrets = UserSecretsClient()
+            hf_token = user_secrets.get_secret("HF_TOKEN")
+            print("[INFO] Successfully loaded HF_TOKEN from Kaggle Secrets.")
+        except Exception as secrets_err:
+            print(f"[WARNING] Could not load HF_TOKEN from Kaggle Secrets: {secrets_err}")
+            print("Please set your HF_TOKEN inside Kaggle Secrets before launching.")
         
     state = load_state()
     start_shard = state["last_processed_shard"] + 1
@@ -96,7 +102,8 @@ def run_conversion_pipeline():
         print(f"[WARNING] Could not verify/create target repository: {e}")
 
     for shard_idx in range(start_shard, TOTAL_SHARDS + 1):
-        shard_name = f"model-{shard_idx:06d}-of-{TOTAL_SHARDS:06d}.safetensors"
+        # DeepSeek-R1 uses asymmetric sharding: 5-digit index, but 6-digit total shard limit!
+        shard_name = f"model-{shard_idx:05d}-of-{TOTAL_SHARDS:06d}.safetensors"
         print(f"\n[SHARD {shard_idx}/{TOTAL_SHARDS}] Downloading {shard_name} from Hugging Face...")
         
         t_download = time.time()
