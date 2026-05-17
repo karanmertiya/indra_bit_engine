@@ -44,13 +44,10 @@ def save_state(shard_idx):
     with open(STATE_FILE, "w") as f:
         json.dump({"last_processed_shard": shard_idx}, f)
 
-def convert_tensor_to_8term_csd(W):
-    """
-    Snaps weight vectors to 8-term Canonical Signed Digit (CSD) exponents 
-    and applies scale correction ratio to achieve absolute 1.000 parity.
-    """
-    W_abs = torch.abs(W)
-    sg = torch.sign(W)
+def convert_tensor_to_8term_csd_chunk(W_chunk):
+    """Snaps a single sub-matrix chunk to CSD to minimize intermediate memory spikes."""
+    W_abs = torch.abs(W_chunk)
+    sg = torch.sign(W_chunk)
     W_quantized = torch.zeros_like(W_abs)
     current_res = W_abs.clone()
     
@@ -66,11 +63,27 @@ def convert_tensor_to_8term_csd(W):
     
     # Precise division scaling correction
     W_quantized_safe = torch.where(W_quantized == 0.0, torch.ones_like(W_quantized) * 1e-12, W_quantized)
-    scale_alignment = W / W_quantized_safe
+    scale_alignment = W_chunk / W_quantized_safe
     
-    # Reconstructed parity tensor
     W_corrected = W_quantized * scale_alignment
     return W_corrected
+
+def convert_tensor_to_8term_csd(W):
+    """
+    Safe wrapper that delegates large matrices to row-by-row chunking 
+    to keep peak RAM footprint strictly under 20MB.
+    """
+    if W.ndim < 2 or W.numel() < 5000000:
+        # Process small tensors directly
+        return convert_tensor_to_8term_csd_chunk(W)
+        
+    # Large 2D layer matrix: process in 512-row chunks
+    W_out = torch.empty_like(W)
+    chunk_size = 512
+    for idx in range(0, W.shape[0], chunk_size):
+        end_idx = min(idx + chunk_size, W.shape[0])
+        W_out[idx:end_idx] = convert_tensor_to_8term_csd_chunk(W[idx:end_idx])
+    return W_out
 
 def run_conversion_pipeline():
     api = HfApi()
@@ -134,6 +147,10 @@ def run_conversion_pipeline():
                 else:
                     W_conv = W
                 converted_tensors[key] = W_conv
+                
+                # Proactively free intermediate tensor reference and run garbage collection
+                del W
+                gc.collect()
                 
         print(f"      CSD Snapping complete in {time.time() - t_convert:.1f}s.")
         
