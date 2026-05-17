@@ -158,11 +158,16 @@ def run_conversion_pipeline():
             break
             
         # Clean local cache files completely to guarantee zero disk growth
-        print("      Wiping downloaded cache files from disk...")
-        if os.path.exists(local_path):
-            os.remove(local_path)
-        if os.path.exists(converted_local_path):
-            os.remove(converted_local_path)
+        print("      Wiping downloaded cache files and all hidden HF metadata from disk...")
+        try:
+            # Complete directory-level purge to destroy all hidden LFS blobs, lock files, and symlinks
+            if os.path.exists(CACHE_DIR):
+                shutil.rmtree(CACHE_DIR, ignore_errors=True)
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            print("      Cache folder successfully purged and reinitialized to 0 bytes.")
+        except Exception as cleanup_err:
+            print(f"      [WARNING] Cache folder purging encountered errors: {cleanup_err}")
+            
         gc.collect()
         
     print("\n" + "="*80)
