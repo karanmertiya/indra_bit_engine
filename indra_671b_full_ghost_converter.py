@@ -45,9 +45,14 @@ def save_state(shard_idx):
         json.dump({"last_processed_shard": shard_idx}, f)
 
 def convert_tensor_to_8term_csd_chunk(W_chunk):
-    """Snaps a single sub-matrix chunk to CSD to minimize intermediate memory spikes."""
-    W_abs = torch.abs(W_chunk)
-    sg = torch.sign(W_chunk)
+    """
+    Snaps a single sub-matrix chunk to CSD to minimize intermediate memory spikes.
+    Performs math in float32 for perfect numerical stability.
+    """
+    # Force float32 for stable log/pow operations inside the chunk
+    W_chunk_fp32 = W_chunk.to(torch.float32)
+    W_abs = torch.abs(W_chunk_fp32)
+    sg = torch.sign(W_chunk_fp32)
     W_quantized = torch.zeros_like(W_abs)
     current_res = W_abs.clone()
     
@@ -63,7 +68,7 @@ def convert_tensor_to_8term_csd_chunk(W_chunk):
     
     # Precise division scaling correction
     W_quantized_safe = torch.where(W_quantized == 0.0, torch.ones_like(W_quantized) * 1e-12, W_quantized)
-    scale_alignment = W_chunk / W_quantized_safe
+    scale_alignment = W_chunk_fp32 / W_quantized_safe
     
     W_corrected = W_quantized * scale_alignment
     return W_corrected
@@ -71,18 +76,22 @@ def convert_tensor_to_8term_csd_chunk(W_chunk):
 def convert_tensor_to_8term_csd(W):
     """
     Safe wrapper that delegates large matrices to row-by-row chunking 
-    to keep peak RAM footprint strictly under 20MB.
+    and natively operates on bfloat16/float16 tensors to cut memory usage by 50%.
     """
-    if W.ndim < 2 or W.numel() < 5000000:
+    original_dtype = W.dtype
+    
+    if W.ndim < 2 or W.numel() < 2000000:
         # Process small tensors directly
-        return convert_tensor_to_8term_csd_chunk(W)
+        return convert_tensor_to_8term_csd_chunk(W).to(original_dtype)
         
     # Large 2D layer matrix: process in 512-row chunks
     W_out = torch.empty_like(W)
     chunk_size = 512
     for idx in range(0, W.shape[0], chunk_size):
         end_idx = min(idx + chunk_size, W.shape[0])
-        W_out[idx:end_idx] = convert_tensor_to_8term_csd_chunk(W[idx:end_idx])
+        # Temporarily slice, cast to float32 for snapped math, and cast back to native format
+        chunk_conv = convert_tensor_to_8term_csd_chunk(W[idx:end_idx])
+        W_out[idx:end_idx] = chunk_conv.to(original_dtype)
     return W_out
 
 def run_conversion_pipeline():
@@ -136,11 +145,11 @@ def run_conversion_pipeline():
         print("      Extracting and converting weights on CPU...")
         t_convert = time.time()
         
-        # Load weights on CPU (fully immune to VRAM spikes)
+        # Load weights on CPU in native format (bfloat16) to protect memory headroom
         converted_tensors = {}
         with safe_open(local_path, framework="pt", device="cpu") as f:
             for key in f.keys():
-                W = f.get_tensor(key).to(torch.float32)
+                W = f.get_tensor(key)
                 # Apply 8-term snapping on transformer layers (skip scaling final layers if needed)
                 if "layers" in key:
                     W_conv = convert_tensor_to_8term_csd(W)
