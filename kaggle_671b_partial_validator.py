@@ -96,7 +96,10 @@ def run_671b_validation():
     # ── Succeeding Scale Correction Ratio ──
     # The direct mathematical ratio W / W_quantized guarantees perfect reconstruction
     # of the continuous weight vector space via our block floating scaling factor!
-    scale_alignment = original_weights / torch.clamp(W_quantized, min=1e-12)
+    # We replace exact zeros with a microscopic positive epsilon to prevent division-by-zero,
+    # while fully preserving the signed parity of all negative and positive values.
+    W_quantized_safe = torch.where(W_quantized == 0.0, torch.ones_like(W_quantized) * 1e-12, W_quantized)
+    scale_alignment = original_weights / W_quantized_safe
     
     # Stochastic dither to beat the dead bit problem
     stochastic_mask = torch.abs(error) < 1e-6
