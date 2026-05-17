@@ -25,7 +25,7 @@ using namespace std::chrono;
 const int N_LAYERS  = 32;   // Transformer depth
 const int N_WARMUP  = 3;    // Warmup runs to flush cache bias
 const int N_REPEAT  = 10;   // Repeated measurements for statistical validity
-const vector<int> SIZES = {512, 1024, 2048, 4096}; // Scalability sweep
+const vector<int> SIZES = {512, 1024, 2048, 4096, 8192}; // Scalability sweep including 70B layer size (8192)
 
 // ── CPU Name ─────────────────────────────────────────────────
 string get_cpu_name() {
@@ -61,22 +61,28 @@ void apot_matmul_avx2(
         __m256i acc = _mm256_setzero_si256();
         for (int col = 0; col < block; col += 8) {
             int idx = row * D + col;
-            __m256i xv = _mm256_set_epi32(X[col+7],X[col+6],X[col+5],X[col+4],X[col+3],X[col+2],X[col+1],X[col]);
-            __m256i s1 = _mm256_set_epi32(k1[idx+7],k1[idx+6],k1[idx+5],k1[idx+4],k1[idx+3],k1[idx+2],k1[idx+1],k1[idx]);
-            __m256i s2 = _mm256_set_epi32(k2[idx+7],k2[idx+6],k2[idx+5],k2[idx+4],k2[idx+3],k2[idx+2],k2[idx+1],k2[idx]);
-            __m256i s3 = _mm256_set_epi32(k3[idx+7],k3[idx+6],k3[idx+5],k3[idx+4],k3[idx+3],k3[idx+2],k3[idx+1],k3[idx]);
-            __m256i s4 = _mm256_set_epi32(k4[idx+7],k4[idx+6],k4[idx+5],k4[idx+4],k4[idx+3],k4[idx+2],k4[idx+1],k4[idx]);
-            __m256i sg = _mm256_set_epi32(sign[idx+7],sign[idx+6],sign[idx+5],sign[idx+4],sign[idx+3],sign[idx+2],sign[idx+1],sign[idx]);
+            
+            // Fast hardware vector loads: load 8 bytes and sign-extend to 8x 32-bit integers in one assembly instruction!
+            __m256i xv = _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i*)(X + col)));
+            __m256i s1 = _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i*)(k1 + idx)));
+            __m256i s2 = _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i*)(k2 + idx)));
+            __m256i s3 = _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i*)(k3 + idx)));
+            __m256i s4 = _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i*)(k4 + idx)));
+            __m256i sg = _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i*)(sign + idx)));
+            
             __m256i v1 = _mm256_srav_epi32(xv, s1);
             __m256i v2 = _mm256_srav_epi32(xv, s2);
             __m256i v3 = _mm256_srav_epi32(xv, s3);
             __m256i v4 = _mm256_srav_epi32(xv, s4);
+            
             __m256i term = _mm256_mullo_epi32(
-                _mm256_add_epi32(_mm256_add_epi32(v1,v2),_mm256_add_epi32(v3,v4)), sg);
+                _mm256_add_epi32(_mm256_add_epi32(v1, v2), _mm256_add_epi32(v3, v4)), sg);
+                
             acc = _mm256_add_epi32(acc, term);
         }
         int32_t* a = (int32_t*)&acc;
         int32_t s = a[0]+a[1]+a[2]+a[3]+a[4]+a[5]+a[6]+a[7];
+        
         // Scalar tail
         for (int col = block; col < D; ++col) {
             int idx = row * D + col;
@@ -85,6 +91,7 @@ void apot_matmul_avx2(
         out[row] = s;
     }
 }
+
 
 // ── Accuracy Metrics ─────────────────────────────────────────
 double compute_mse(const float* a, const float* b, int n) {
@@ -118,6 +125,36 @@ void bench_size(int D) {
 
     // APoT output converted back to float for accuracy comparison
     vector<float> out_apot_f(D);
+    
+    // Snapping logic: Initialize APoT buffers based on actual floating-point weights
+    float max_val = 0.0f;
+    for (float w : W_f) { if (abs(w) > max_val) max_val = abs(w); }
+    
+    // Snapping FP32 weights to 4-term APoT representation
+    for (int i = 0; i < N; ++i) {
+        float w = W_f[i];
+        if (abs(w) < 1e-6) {
+            sg[i] = 0; k1[i] = 20; k2[i] = 20; k3[i] = 20; k4[i] = 20;
+            continue;
+        }
+        sg[i] = (w > 0) ? 1 : -1;
+        float w_abs = abs(w);
+        
+        int exponent1 = round(log2(w_abs));
+        k1[i] = clamp(-exponent1, 0, 20);
+        float res1 = w_abs - pow(2.0, exponent1);
+        
+        int exponent2 = round(log2(max(1e-6f, abs(res1))));
+        k2[i] = clamp(-exponent2, k1[i] + 1, 20);
+        float res2 = res1 - pow(2.0, exponent2);
+        
+        int exponent3 = round(log2(max(1e-6f, abs(res2))));
+        k3[i] = clamp(-exponent3, k2[i] + 1, 20);
+        float res3 = res2 - pow(2.0, exponent3);
+        
+        int exponent4 = round(log2(max(1e-6f, abs(res3))));
+        k4[i] = clamp(-exponent4, k3[i] + 1, 20);
+    }
 
     // ── Warmup (removes cache-cold bias equally for both) ────
     for (int w = 0; w < N_WARMUP; ++w) {
@@ -157,13 +194,15 @@ void bench_size(int D) {
     double speedup  = fp32_ms / apot_ms;
 
     // ── Accuracy ─────────────────────────────────────────────
-    // Convert int32 output to float for comparison
-    float scale = 10.0f / 127.0f;  // same scale used at input
-    for (int i = 0; i < D; ++i)
-        out_apot_f[i] = out_apot[i] * scale * scale;
-
+    // Convert APoT accumulation outputs directly to matching float
+    for (int i = 0; i < D; ++i) {
+        // Inputs were scaled to int8. Map the accumulated int32 back to float
+        out_apot_f[i] = (float)out_apot[i] / 127.0f; 
+    }
+    
     double mse     = compute_mse(out_fp32.data(), out_apot_f.data(), D);
     double cosine  = compute_cosine(out_fp32.data(), out_apot_f.data(), D);
+
     long long macs = (long long)D * D * N_LAYERS;
 
     // ── Print ─────────────────────────────────────────────────

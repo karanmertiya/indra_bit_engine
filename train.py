@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser(description="Indra-Bit Training Engine")
     parser.add_argument("--width", type=int, default=40, help="Base width (40 = 1.7M params)")
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--teacher", type=str, default="cifar10_repvgg_a2")
+    parser.add_argument("--mode", type=str, default="futureself", choices=["teacher", "futureself"], help="Training mode: 'teacher' for standard distillation, 'futureself' for temporal self-distillation")
     args = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -36,7 +36,6 @@ def main():
     test_loader  = DataLoader(datasets.CIFAR10('.', False, transform=tf_test), batch_size=256, shuffle=False, num_workers=2)
 
     # Models
-    teacher = load_teacher(args.teacher, device)
     student = IndraBitResNet(base_width=args.width).to(device)
 
     s_params = sum(p.numel() for p in student.parameters())
@@ -52,7 +51,16 @@ def main():
     sched_fp32 = torch.optim.lr_scheduler.CosineAnnealingLR(opt_fp32, T_max=args.epochs)
     sched_bit = torch.optim.lr_scheduler.CosineAnnealingLR(opt_bit, T_max=args.epochs)
 
-    distiller = FP16Distiller(teacher, student, device)
+    # Dynamic Distiller selection
+    if args.mode == "teacher":
+        teacher = load_teacher(args.teacher, device)
+        from core.distiller import FP16Distiller
+        distiller = FP16Distiller(teacher, student, device)
+        print(f"[Indra-Bit] Mode: Distillation from pre-trained teacher '{args.teacher}'")
+    else:
+        from core.distiller import FutureSelfDistiller
+        distiller = FutureSelfDistiller(student, device)
+        print("[Indra-Bit] Mode: Temporal Self-Distillation (Future-Self online teacher)")
 
     print(f"\n--- Starting FP16 Distillation ({args.epochs} Epochs) ---")
     best_acc = 0.0
