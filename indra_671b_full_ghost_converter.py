@@ -34,6 +34,12 @@ STATE_FILE = "/kaggle/working/conversion_state.json"
 CACHE_DIR = "/kaggle/working/hf_cache"
 TOTAL_SHARDS = 163  # DeepSeek-R1 total weight files
 
+# Parallel Execution Range Partitioning
+# To run multiple parallel conversion notebooks on Kaggle, divide the workload
+# (e.g., Notebook 1: 1 to 32, Notebook 2: 33 to 64, etc.)
+START_SHARD_RANGE = 1
+END_SHARD_RANGE = 163
+
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
@@ -110,10 +116,12 @@ def run_conversion_pipeline():
             print("Please set your HF_TOKEN inside Kaggle Secrets before launching.")
         
     state = load_state()
-    start_shard = state["last_processed_shard"] + 1
+    # Support parallel partitioning across multiple notebooks
+    start_shard = max(state["last_processed_shard"] + 1, START_SHARD_RANGE)
+    end_shard = min(TOTAL_SHARDS, END_SHARD_RANGE)
     
     print("="*80)
-    print(f"  INDRA-BIT 671B FULL GHOST CONVERTER — STARTING AT SHARD {start_shard}/{TOTAL_SHARDS}")
+    print(f"  INDRA-BIT 671B FULL GHOST CONVERTER — PROCESSING RANGE {start_shard} TO {end_shard} (TOTAL {TOTAL_SHARDS})")
     print("="*80)
     
     # Ensure target repository exists on Hugging Face
@@ -123,7 +131,7 @@ def run_conversion_pipeline():
     except Exception as e:
         print(f"[WARNING] Could not verify/create target repository: {e}")
 
-    for shard_idx in range(start_shard, TOTAL_SHARDS + 1):
+    for shard_idx in range(start_shard, end_shard + 1):
         # DeepSeek-R1 uses asymmetric sharding: 5-digit index, but 6-digit total shard limit!
         shard_name = f"model-{shard_idx:05d}-of-{TOTAL_SHARDS:06d}.safetensors"
         print(f"\n[SHARD {shard_idx}/{TOTAL_SHARDS}] Downloading {shard_name} from Hugging Face...")
