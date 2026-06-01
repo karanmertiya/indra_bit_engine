@@ -30,7 +30,8 @@ The entire array is wrapped in a custom state machine utilizing the industry-sta
 
 I engineered a rigorous testbench to prove the Output-Stationary datapath. As shown in the EPWave logic analyzer, the AXI-Stream injects simultaneous weights and activations (`01` and `02` respectively), and accurately bursts the accumulated matrix multiplication results exactly 16 pipeline stages later.
 
-> *Note: Cycle-accurate EPWave simulation shows AXI-Stream simultaneous data injection and partial sum extraction.*
+> ![EPWave Simulation](epwave_simulation.png)
+> *Caption: Cycle-accurate EPWave simulation showing AXI-Stream simultaneous data injection and partial sum extraction.*
 
 ---
 
