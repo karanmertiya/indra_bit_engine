@@ -1,67 +1,3 @@
-# Scalable NPU Core for Large Language Models
-
-**Role:** ASIC Logic Designer  
-**Keywords:** `Verilog`, `ASIC Synthesis`, `Output-Stationary Systolic Array`, `SwiGLU`, `Yosys`, `AXI-Stream`
-
-## Project Overview
-Designed and synthesized a custom Neural Processing Unit (NPU) Core in Verilog, specifically targeted at accelerating modern Large Language Model (LLM) inference (e.g., LLaMA-3). The design implements a highly optimized **Output-Stationary Dataflow** architecture for its core matrix multiplication engine, bypassing the memory bottlenecks of traditional GPU architectures.
-
----
-
-## 1. Architectural Highlights
-
-### Output-Stationary Systolic Array
-Unlike default AI-generated architectures that rely on Weight-Stationary designs, this core utilizes a custom **16x16 Output-Stationary Dataflow**. 
-- **The Dataflow:** Partial sums (`psum`) remain stationary inside the registers of the Multiply-Accumulate (MAC) cells. Both the weights and the activations stream continuously across the 2D grid simultaneously like a wave.
-- **The Advantage:** This proves deep knowledge of silicon data routing. By keeping the accumulator stationary, we drastically lower the memory fetch latency during the matrix draining phase and eliminate the need to repeatedly fetch partial sums from SRAM.
-
-### AXI-Stream Interconnect
-The entire array is wrapped in a custom state machine utilizing the industry-standard **AXI-Stream interface**. 
-- Accepts a unified `256-bit` wide stream (`128-bit` Weights, `128-bit` Activations) simultaneously.
-- Flawlessly handles pipeline stalls and synchronizes the 16-cycle draining phase to output `512-bit` results on `m_axis_tdata` with valid/ready handshaking.
-
-### Non-Linear Hardware Blocks
-- **Hardware SwiGLU**: Implemented piecewise logic approximations for the Sigmoid gate $\sigma(x)$ and pipelined multipliers for the computationally expensive $x \cdot \sigma(x) \cdot y$ Swish-Gated Linear Unit activation used in LLaMA.
-- **RoPE (Rotary Positional Embeddings)**: Designed a custom datapath for 2D complex plane rotations utilizing dedicated Sine/Cosine ROMs to handle modern LLM context scaling in hardware.
-
----
-
-## 2. Hardware Simulation & Verification
-
-I engineered a rigorous testbench to prove the Output-Stationary datapath. As shown in the EPWave logic analyzer, the AXI-Stream injects simultaneous weights and activations (`01` and `02` respectively), and accurately bursts the accumulated matrix multiplication results exactly 16 pipeline stages later.
-
-> *Note: Cycle-accurate EPWave simulation shows AXI-Stream simultaneous data injection and partial sum extraction.*
-
----
-
-## 3. Physical Silicon Synthesis (Yosys)
-
-To prove physical realizability, the RTL was synthesized down to standard silicon logic gates using the **Yosys Open SYnthesis Suite (v0.38)**. The toolchain successfully converted the behavioral AXI state machines into physical Multiplexers (`$procmux`) and mapped the stationary accumulation registers to physical D-Flip-Flops (`$dff`). 
-
-```text
-1. Executing Verilog-2005 frontend: design.sv
-...
-3.7. Executing PROC_MUX pass (convert decision trees to multiplexers).
-Creating decoders for process `\axi_stream_intf.$proc$design.sv:102$105`.
-...
-3.9. Executing PROC_DFF pass (convert process syncs to FFs).
-Creating register for signal `\axi_stream_intf.\m_axis_tdata`
-  created $adff cell `$procdff$247' with positive edge clock and negative level reset.
-...
-9. Executing Verilog backend.
-End of script. Logfile hash: 5c5ce1598a, CPU: user 0.46s system 0.04s, MEM: 13.22 MB peak
-Yosys 0.38+113
-Done
-```
-
----
-
-## 4. Full Source Code
-
-<details>
-<summary>Click to expand Verilog Source Code</summary>
-
-```verilog
 `timescale 1ns / 1ps
 
 `define ARRAY_SIZE 16
@@ -217,5 +153,3 @@ module npu_core_top (
         .psum_out_vec(array_psum_out)
     );
 endmodule
-```
-</details>
