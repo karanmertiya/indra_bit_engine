@@ -3,6 +3,8 @@
 **Role:** ASIC Logic Designer  
 **Keywords:** `Verilog`, `ASIC Synthesis`, `Output-Stationary Systolic Array`, `SwiGLU`, `Yosys`, `AXI-Stream`
 
+*Note: This repository contains the Hardware RTL / ASIC Silicon implementation. For the Software C++ / CUDA implementation that runs on this logic, see the sister project: [indra-bit](https://github.com/karanmertiya/indra-bit).*
+
 ## Project Overview
 Designed and synthesized a custom Neural Processing Unit (NPU) Core in Verilog, specifically targeted at accelerating modern Large Language Model (LLM) inference (e.g., LLaMA-3). The design implements a highly optimized **Output-Stationary Dataflow** architecture for its core matrix multiplication engine, bypassing the memory bottlenecks of traditional GPU architectures.
 
