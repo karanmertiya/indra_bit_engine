@@ -1,0 +1,22 @@
+read_verilog -sv npu_params.vh
+read_verilog -sv systolic_array_16x16.v
+read_verilog -sv mac_cell.v
+read_verilog -sv sram_model.v
+read_verilog -sv rope_act_v3.v
+read_verilog -sv rope_vector_unit.v
+read_verilog -sv npu_tile_top.v
+
+synth -top npu_tile_top -flatten
+
+# Map to generic gates (no PDK needed) - gives us real cell count
+techmap
+opt
+
+# Use ABC for generic gate optimisation + critical path analysis
+abc -g AND,OR,XOR,MUX,DFF
+
+# Print gate-level statistics
+stat
+
+# Write out gate-level netlist for inspection
+write_verilog synth_gate_level.v

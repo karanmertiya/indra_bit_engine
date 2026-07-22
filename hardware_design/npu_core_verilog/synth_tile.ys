@@ -1,0 +1,4 @@
+read_verilog -sv npu_params.vh systolic_array_16x16.v mac_cell.v sram_model.v rope_act_v3.v rope_vector_unit.v npu_tile_top.v
+hierarchy -top npu_tile_top
+synth
+stat
